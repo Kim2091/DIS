@@ -1,0 +1,16 @@
+torch>=1.12.0
+torchvision>=0.13.0
+numpy>=1.21.0
+
+# ONNX export
+onnx>=1.14.0
+onnxruntime-gpu>=1.15.0
+
+# Optional: ONNX simplification
+onnxsim>=0.4.0
+
+# Optional: for inference utilities
+Pillow>=9.0.0
+
+# Optional: for FLOPs counting
+thop>=0.1.1
