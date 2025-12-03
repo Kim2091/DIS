@@ -13,8 +13,8 @@ python tools/export_onnx.py pretrained_models/model.safetensors model.onnx --mod
 Arguments:
 - `input`: Path to input weights (.safetensors or .pth)
 - `output`: Path to output ONNX file
-- `--model`: Model variant (e.g., `fast`, `balanced`, `xl`)
-- `--scale`: Upscaling factor (1, 2, 3, or 4)
+- `--model`: Model variant (e.g., `fast`, `balanced`)
+- `--scale`: Upscaling factor (1, 2, or 4)
 - `--fp16`: Export in FP16 precision
 - `--validate`: Validate exported model against PyTorch
 - `--no-simplify`: Skip ONNX graph simplification
@@ -35,3 +35,4 @@ Arguments:
 - `--rgb`: Generate RGB shader (hooks MAIN instead of LUMA)
 - `--name`: Model name for shader comments
 - `--simplified`: Generate simplified single-pass shader
+
