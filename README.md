@@ -34,10 +34,9 @@ This is the inference and ONNX conversion code. To train a model, you'll want to
 |-------|-----|---------------|---------------|-------|
 | DIS_Balanced | 100 | 27.44 | 0.898 | Slightly behind Compact, faster |
 | DIS_Fast | 137 | 27.27 | 0.895 | On par with ArtCNN R8F48, 2x faster |
-| Compact | 78 | 27.59 | 0.90 | Reference model |
-| SPAN 48 | 81 | 27.53 | 0.90 | Reference model |
-
 | ArtCNN R8F48 | 86 | 27.25 | 0.897 | Reference model |
+| Compact | 78 | 27.59 | 0.90 | Reference model |
+
 
 ## Usage
 
@@ -84,4 +83,5 @@ trtexec --onnx=model_fp16.onnx \
     --saveEngine=model_dynamic.engine \
     --fp16
 ```
+
 
