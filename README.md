@@ -23,7 +23,6 @@ This is the inference and ONNX conversion code. To train a model, you'll want to
 
 | Variant | Parameters (2x) | Description |
 |---------|-----------|-------------|
-| `DIS_XL` | ~343K | Max quality |
 | `DIS_Balanced` | ~269K | Balance of speed and quality |
 | `DIS_Fast` | ~195K | Fastest, recommended |
 
@@ -73,42 +72,14 @@ trtexec --onnx=model_fp16.onnx \
     --fp16
 ```
 
-## Benchmarks:
+## Benchmarks
 
-2x, 720p FP16 tensorrt, 2 streams
+**Configuration**: 2x upscale, 720p, FP16 with TensorRT, 2 streams
 
-__DIS_XL__ (Somewhere between Span 48 and Span 52)
-51 FPS
-BHI100 PSNR:
-`'mean': np.float64(27.55756875991821)}}`
-
-BHI100 SSIMC:
-`'mean': np.float64(0.9000162765941646)}}`
-
-__DIS_Balanced__ (Slightly behind full size Compact, but faster)
-100 FPS
-BHI100 PSNR:
-`'mean': np.float64(27.442623882293702)}}`
-
-BHI100 SSIMC:
-`'mean': np.float64(0.8978795604670543)}}`
-
-__DIS_Fast__ (Slightly behind ArtCNN R8F48, but almost twice as fast)
-137 FPS
-BHI100 PSNR:
-`'mean': np.float64(27.27130084991455)}}`
-
-BHI100 SSIMC:
-`'mean': np.float64(0.8946407187861588)}}`
-
-__SuperUltraCompact__
-340 FPS
-
-__SPAN__
-81 FPS
-
-__ArtCNNR8F48__
-86 FPS
-
-__Compact__
-78 FPS
+| Model | FPS | PSNR (BHI100) | SSIM (BHI100) | Notes |
+|-------|-----|---------------|---------------|-------|
+| DIS_Balanced | 100 | 27.44 | 0.898 | Slightly behind Compact, faster |
+| DIS_Fast | 137 | 27.27 | 0.895 | On par with ArtCNN R8F48, 2x faster |
+| Compact | 78 | 27.59 | 0.90 | Reference model |
+| SPAN 48 | 81 | 27.53 | 0.90 | Reference model |
+| ArtCNN R8F48 | 86 | 27.25 | 0.897 | Reference model |
