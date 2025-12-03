@@ -2,7 +2,7 @@
 
 DIS (Direct Image Supersampling) is a lightweight image super-resolution architecture optimized for speed and real-time inference. It has support for PyTorch, ONNX, and TensorRT.
 
-This is the inference and ONNX conversion code. To train a model, you'll want to use [traiNNer-redux](https://github.com/the-database/traiNNer-redux).
+This is the inference and ONNX conversion code. To train a model, you'll want to use [traiNNer-redux](https://github.com/Kim2091/traiNNer-redux-1).
 
 ## Getting Started
 
@@ -84,3 +84,4 @@ trtexec --onnx=model_fp16.onnx \
     --saveEngine=model_dynamic.engine \
     --fp16
 ```
+
