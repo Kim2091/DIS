@@ -164,25 +164,6 @@ class DIS(nn.Module):
 
 @ARCH_REGISTRY.register()
 @SPANDREL_REGISTRY.register()
-def dis_xl(
-    in_channels: int = 3,
-    out_channels: int = 3,
-    num_features: int = 32,
-    num_blocks: int = 16,
-    scale: int = 4,
-    use_depthwise: bool = False,
-) -> DIS:
-    return DIS(
-        in_channels=in_channels,
-        out_channels=out_channels,
-        num_features=num_features,
-        num_blocks=num_blocks,
-        scale=scale,
-        use_depthwise=use_depthwise,
-    )
-
-@ARCH_REGISTRY.register()
-@SPANDREL_REGISTRY.register()
 def dis_balanced(
     in_channels: int = 3,
     out_channels: int = 3,
@@ -207,25 +188,6 @@ def dis_fast(
     out_channels: int = 3,
     num_features: int = 32,
     num_blocks: int = 8,
-    scale: int = 4,
-    use_depthwise: bool = False,
-) -> DIS:
-    return DIS(
-        in_channels=in_channels,
-        out_channels=out_channels,
-        num_features=num_features,
-        num_blocks=num_blocks,
-        scale=scale,
-        use_depthwise=use_depthwise,
-    )
-
-@ARCH_REGISTRY.register()
-@SPANDREL_REGISTRY.register()
-def dis_nano(
-    in_channels: int = 3,
-    out_channels: int = 3,
-    num_features: int = 10,
-    num_blocks: int = 6,
     scale: int = 4,
     use_depthwise: bool = False,
 ) -> DIS:
