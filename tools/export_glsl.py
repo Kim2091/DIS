@@ -123,12 +123,21 @@ class ConversionError(Exception):
 # =============================================================================
 
 class ShaderBuilder:
-    def __init__(self, model_name: str, hook: str, scale: int, precision: int, source: str):
+    # Compute pass tiling: 16x8 = 128 threads per workgroup, one output pixel
+    # per thread. With a 1-pixel halo the shared tile is 18x10 texels per
+    # input texture; 8 textures (32 features) use 23 KiB of the 32 KiB
+    # shared-memory minimum.
+    BLOCK_W = 16
+    BLOCK_H = 8
+
+    def __init__(self, model_name: str, hook: str, scale: int, precision: int, source: str,
+                 compute: bool = False):
         self.model_name = model_name
         self.hook = hook            # 'LUMA' or 'MAIN'
         self.scale = scale
         self.precision = precision
         self.source = source
+        self.compute = compute
         self.passes: List[str] = []
 
         if scale > 1:
@@ -151,7 +160,8 @@ class ShaderBuilder:
             f"\n"
         )
 
-    def pass_header(self, desc: str, binds: List[str], save: Optional[str], out_scale: int) -> str:
+    def pass_header(self, desc: str, binds: List[str], save: Optional[str], out_scale: int,
+                    compute: bool = False) -> str:
         lines = [f"//!DESC {self.model_name} {desc}", f"//!HOOK {self.hook}"]
         seen = set()
         bind_list = []
@@ -166,6 +176,8 @@ class ShaderBuilder:
         if out_scale != 1:
             lines.append(f"//!WIDTH HOOKED.w {out_scale} *")
             lines.append(f"//!HEIGHT HOOKED.h {out_scale} *")
+        if compute:
+            lines.append(f"//!COMPUTE {self.BLOCK_W} {self.BLOCK_H}")
         lines.append("//!COMPONENTS 4")
         if self.when:
             lines.append(f"//!WHEN {self.when}")
@@ -214,6 +226,12 @@ class ShaderBuilder:
         num_out_groups = (out_ch + 3) // 4
         num_in_groups = (inp.channels + 3) // 4
         assert len(out_textures) == num_out_groups
+
+        # Dense 3x3 convs benefit from cooperative shared-memory tiling;
+        # 1x1 and depthwise convs have no fetch reuse to exploit.
+        if self.compute and not depthwise and (kh, kw) == (3, 3):
+            self.emit_conv_compute(conv, inp, out_textures, act, residual, is_output)
+            return
 
         for g in range(num_out_groups):
             oc0 = g * 4
@@ -289,6 +307,107 @@ class ShaderBuilder:
             else:
                 code += "    return result;\n}\n\n"
 
+            self.passes.append(code)
+
+    # -- compute conv pass ------------------------------------------------------
+
+    def emit_conv_compute(self,
+                          conv: ConvInfo,
+                          inp: Tensor,
+                          out_textures: List[str],
+                          act: Optional[Tuple[str, Optional[np.ndarray]]],
+                          residual: Optional[Tensor],
+                          is_output: bool) -> None:
+        """Compute-shader version of a dense 3x3 conv pass. Each 16x8 workgroup
+        loads an 18x10 halo tile of every input texture into shared memory
+        (clamp-to-edge, like the fragment version's texOff), then each thread
+        accumulates its 9-tap convolution from shared memory."""
+        out_ch = conv.weight.shape[0]
+        bw, bh = self.BLOCK_W, self.BLOCK_H
+        tw, th = bw + 2, bh + 2
+        tile, threads = tw * th, bw * bh
+
+        in_texs = ["HOOKED"] if inp.kind == "hooked" else list(inp.textures)
+        luma_input = (inp.kind == "hooked" and inp.channels == 1)
+        num_out_groups = (out_ch + 3) // 4
+
+        def off(base: str, d: int) -> str:
+            return base if d == 0 else (f"{base} + {d}" if d > 0 else f"{base} - {-d}")
+
+        for g in range(num_out_groups):
+            oc0 = g * 4
+            oc1 = min(oc0 + 4, out_ch)
+            oc_count = oc1 - oc0
+
+            binds = list(in_texs)
+            if residual is not None and residual.kind == "textures":
+                binds.append(residual.textures[g])
+
+            desc = f"{conv.name} ({oc_count}ch) {g + 1}/{num_out_groups} [compute]"
+            save = None if (is_output and num_out_groups == 1) else out_textures[g]
+            code = self.pass_header(desc, binds, save, inp.scale, compute=True)
+
+            for i in range(len(in_texs)):
+                code += f"shared vec4 in{i}[{th}][{tw}];\n"
+            code += "void hook() {\n"
+            code += f"    ivec2 base = ivec2(gl_WorkGroupID.xy) * ivec2({bw}, {bh}) - ivec2(1, 1);\n"
+            code += f"    ivec2 texsz = ivec2({in_texs[0]}_size);\n"
+            code += f"    for (uint i = gl_LocalInvocationIndex; i < {tile}u; i += {threads}u) {{\n"
+            code += f"        ivec2 o = ivec2(int(i) % {tw}, int(i) / {tw});\n"
+            code += "        ivec2 c = clamp(base + o, ivec2(0), texsz - ivec2(1));\n"
+            for i, tex in enumerate(in_texs):
+                code += f"        in{i}[o.y][o.x] = {tex}_mul * texelFetch({tex}_raw, c, 0);\n"
+            code += "    }\n"
+            code += "    barrier();\n"
+            code += "    ivec2 l = ivec2(gl_LocalInvocationID.xy) + ivec2(1, 1);\n"
+
+            if conv.bias is not None:
+                code += f"    vec4 result = {format_vec4(conv.bias[oc0:oc1], self.precision)};\n"
+            else:
+                code += "    vec4 result = vec4(0.0);\n"
+
+            for ig in range(len(in_texs)):
+                ic0 = ig * 4
+                ic1 = min(ic0 + 4, inp.channels)
+                ic_count = ic1 - ic0
+                for ky in (-1, 0, 1):
+                    for kx in (-1, 0, 1):
+                        w = conv.weight[oc0:oc1, ic0:ic1, ky + 1, kx + 1]
+                        if np.allclose(w, 0, atol=1e-8):
+                            continue
+                        sample = f"in{ig}[{off('l.y', ky)}][{off('l.x', kx)}]"
+                        if luma_input:
+                            code += (f"    result += {format_vec4(w.flatten(), self.precision)}"
+                                     f" * {sample}.x;\n")
+                        else:
+                            w_pad = np.zeros((4, 4), dtype=np.float64)
+                            w_pad[:oc_count, :ic_count] = w
+                            code += (f"    result += {format_mat4(w_pad.T, self.precision)}"
+                                     f" * {sample};\n")
+
+            code += self._activation_code(act, oc0, oc_count)
+
+            code += "    ivec2 gid = ivec2(gl_GlobalInvocationID.xy);\n"
+            if residual is not None:
+                if residual.kind == "textures":
+                    res = residual.textures[g]
+                    code += (f"    result += {res}_mul * texelFetch({res}_raw, "
+                             f"min(gid, ivec2({res}_size) - ivec2(1)), 0);\n")
+                else:
+                    # GPU bilinear sample of HOOKED at the output pixel center
+                    # (matches F.interpolate(align_corners=False); exact copy at 1x).
+                    denom = "HOOKED_size" if inp.scale == 1 else f"(HOOKED_size * {inp.scale}.0)"
+                    code += (f"    result += HOOKED_mul * textureLod(HOOKED_raw, "
+                             f"(vec2(gid) + vec2(0.5)) / {denom}, 0.0);\n")
+
+            if is_output:
+                code += "    result = clamp(result, vec4(0.0), vec4(1.0));\n"
+                if self.hook == "LUMA":
+                    code += "    result = vec4(result.x, 0.0, 0.0, 1.0);\n"
+                else:
+                    code += "    result = vec4(result.rgb, 1.0);\n"
+            code += "    imageStore(out_image, gid, result);\n"
+            code += "}\n\n"
             self.passes.append(code)
 
     # -- pixelshuffle pass ----------------------------------------------------
@@ -408,7 +527,8 @@ class ShaderBuilder:
 
 class GraphConverter:
     def __init__(self, onnx_path: str, model_name: str, precision: int = 8,
-                 expected_scale: Optional[int] = None, verbose: bool = True):
+                 expected_scale: Optional[int] = None, verbose: bool = True,
+                 compute: bool = False):
         if not ONNX_AVAILABLE:
             raise ImportError("onnx package required. Install with: pip install onnx")
 
@@ -418,6 +538,7 @@ class GraphConverter:
         self.precision = precision
         self.expected_scale = expected_scale
         self.verbose = verbose
+        self.compute = compute
         self.source = Path(onnx_path).name
 
         self.weights: Dict[str, np.ndarray] = {}
@@ -512,7 +633,10 @@ class GraphConverter:
         self._log(f"  Input: {in_ch} channel(s) -> hooking {hook}")
         self._log(f"  Detected scale: {scale}x")
 
-        builder = ShaderBuilder(self.model_name, hook, scale, self.precision, self.source)
+        if self.compute:
+            self._log("  Compute passes: enabled (dense 3x3 convs)")
+        builder = ShaderBuilder(self.model_name, hook, scale, self.precision, self.source,
+                                compute=self.compute)
 
         input_name = self.graph.input[0].name
         output_name = self.graph.output[0].name
@@ -686,10 +810,12 @@ def export_onnx_to_glsl(onnx_path: str,
                         model_name: str = "DIS",
                         precision: int = 8,
                         expected_scale: Optional[int] = None,
-                        verbose: bool = True) -> str:
+                        verbose: bool = True,
+                        compute: bool = False) -> str:
     if verbose:
         print(f"Loading ONNX model: {onnx_path}")
-    converter = GraphConverter(onnx_path, model_name, precision, expected_scale, verbose)
+    converter = GraphConverter(onnx_path, model_name, precision, expected_scale, verbose,
+                               compute=compute)
     shader = converter.convert()
 
     out = Path(output_path)
@@ -718,6 +844,10 @@ models) are detected automatically from the ONNX graph.
                         help='Optional: assert the model scale (auto-detected otherwise)')
     parser.add_argument('--precision', type=int, default=8,
                         help='Decimal precision for weights (default: 8)')
+    parser.add_argument('--compute', action='store_true',
+                        help='Emit compute-shader passes (shared-memory tiling) for dense '
+                             '3x3 convs. Experimental; requires compute shader support '
+                             '(vo=gpu-next, or vo=gpu with GL 4.3+/d3d11)')
     args = parser.parse_args()
 
     print("=" * 60)
@@ -731,6 +861,7 @@ models) are detected automatically from the ONNX graph.
             model_name=args.name,
             precision=args.precision,
             expected_scale=args.scale,
+            compute=args.compute,
         )
     except ConversionError as e:
         print(f"\nError: {e}")

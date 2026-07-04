@@ -39,6 +39,16 @@ Arguments:
 - `--name`: Model name for shader comments
 - `--scale`: Optional; asserts the expected scale against what the graph contains
 - `--precision`: Decimal precision for embedded weights (default: 8)
+- `--compute`: Experimental; emits compute-shader passes for the dense 3x3 convs.
+  Each 16x8 workgroup cooperatively loads the input tile (with halo) into shared
+  memory once instead of every pixel fetching its 3x3 neighborhood from every
+  input texture. Output is pixel-identical to the fragment version (verified
+  within 1/255 in mpv). Measured on an RTX 5080 laptop with vo=gpu-next +
+  Vulkan: ~5% faster than the fragment shader (the workload is ALU-bound on
+  modern GPUs, so the fetch savings are mostly absorbed by the texture cache;
+  bandwidth-limited GPUs may see more). On Windows, use `--gpu-api=vulkan`
+  with this: the d3d11 backend's HLSL translation takes ~1s per pass on the
+  first (uncached) load.
 
 **mpv requirements:** the intermediate feature maps contain negative values,
 so the shader needs float FBOs. Use `vo=gpu-next` (recommended), or `vo=gpu`
