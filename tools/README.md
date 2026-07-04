@@ -14,25 +14,39 @@ Arguments:
 - `input`: Path to input weights (.safetensors or .pth)
 - `output`: Path to output ONNX file
 - `--model`: Model variant (e.g., `fast`, `balanced`)
-- `--scale`: Upscaling factor (1, 2, or 4)
+- `--scale`: Upscaling factor (1, 2, 3, or 4)
 - `--fp16`: Export in FP16 precision
 - `--validate`: Validate exported model against PyTorch
 - `--no-simplify`: Skip ONNX graph simplification
 
-## export_glsl_1x_only.py
-**__NOTE:__** This is experimental. It is currently broken for any model scale above 1x.
+## export_glsl.py
 
-Converts ONNX models to mpv-compatible RGB GLSL shaders.
+Converts ONNX models to mpv-compatible GLSL shaders. Works for all DIS scales
+(1x, 2x, 3x, 4x), both the regular and depthwise (`use_depthwise`) variants,
+and FP16 or FP32 exports. The converter walks the ONNX graph directly, so the
+scale and hook point are detected automatically:
+
+- 3-channel (RGB) models hook `MAIN`
+- 1-channel models hook `LUMA`
 
 ```bash
-python .\export_glsl.py --onnx .\1x-SwatKats_DIS_Balanced_fp16.onnx --output .\exports\1x-SwatKats_DIS_Balanced_fp16.glsl --scale 1 --rgb
+python tools/export_glsl.py --onnx 1x-SwatKats_DIS_Balanced_fp16.onnx --output exports/1x-SwatKats_DIS_Balanced_fp16.glsl --name SwatKats
 ```
 
 Arguments:
-- `--onnx`: Path to ONNX model file
+- `--onnx`: Path to ONNX model file (export with `export_onnx.py`, opset 17)
 - `--output`: Output path for GLSL shader
-- `--scale`: Must be set to `1`
-- `--rgb`: Generate RGB shader (hooks MAIN instead of LUMA)
 - `--name`: Model name for shader comments
-- `--simplified`: Generate simplified single-pass shader
+- `--scale`: Optional; asserts the expected scale against what the graph contains
+- `--precision`: Decimal precision for embedded weights (default: 8)
+
+**mpv requirements:** the intermediate feature maps contain negative values,
+so the shader needs float FBOs. Use `vo=gpu-next` (recommended), or `vo=gpu`
+with `fbo-format=rgba16f`. With the default unorm FBOs on `vo=gpu`, features
+get clamped and quality silently degrades.
+
+Known limitation: convolution borders use clamp-to-edge sampling instead of
+the zero padding ONNX uses, so the outermost few pixels differ slightly from
+ONNX inference. This is inherent to mpv hook shaders (ArtCNN/FSRCNNX behave
+the same way).
 

@@ -68,6 +68,12 @@ python tools/export_onnx.py --model pretrained_models/model.pth --output model.o
 -   `--dynamic`: Create a model that supports various input sizes.
 -   `--fp16`: Convert the model to FP16 for a speed boost.
 
+**Convert ONNX model to an mpv GLSL shader**:
+```bash
+python tools/export_glsl.py --onnx model.onnx --output model.glsl --name MyModel
+```
+Supports all scales (1x-4x); the scale and hook point (RGB → `MAIN`, single-channel → `LUMA`) are detected automatically from the ONNX graph. Requires float FBOs in mpv: use `vo=gpu-next`, or `vo=gpu` with `fbo-format=rgba16f`. See [tools/README.md](tools/README.md) for details.
+
 ## TensorRT
 
 The easiest way to use this model with TensorRT is through [Vapourkit](https://github.com/Kim2091/vapourkit) or [VideoJaNai](https://github.com/the-database/VideoJaNai).
