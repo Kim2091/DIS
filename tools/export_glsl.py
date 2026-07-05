@@ -298,7 +298,9 @@ class ShaderBuilder:
                           out_textures: List[str],
                           r: int,
                           mode: str,
-                          act: Optional[Tuple[str, Optional[np.ndarray]]]) -> None:
+                          act: Optional[Tuple[str, Optional[np.ndarray]]],
+                          residual_base: bool = False,
+                          is_output: bool = False) -> None:
         """Emit passes performing DepthToSpace [C*r^2, H, W] -> [C, H*r, W*r].
 
         For each output pixel, idx = (y % r) * r + (x % r) selects which input
@@ -310,6 +312,8 @@ class ShaderBuilder:
         num_out_groups = (c_out + 3) // 4
         out_scale = inp.scale * r
         assert len(out_textures) == num_out_groups
+        if is_output and num_out_groups > 1:
+            raise ConversionError("PixelShuffle output with more than 4 channels")
 
         def in_channel(oc: int, idx: int) -> int:
             if mode == "CRD":
@@ -333,7 +337,8 @@ class ShaderBuilder:
             svar = {t: f"s{si}" for si, t in enumerate(needed_texs)}
 
             desc = f"PixelShuffle {r}x ({oc_count}ch) {g + 1}/{num_out_groups}"
-            code = self.pass_header(desc, binds, out_textures[g], out_scale)
+            save = None if is_output else out_textures[g]
+            code = self.pass_header(desc, binds, save, out_scale)
             code += "vec4 hook() {\n"
 
             ref = inp.textures[needed_texs[0]]
@@ -382,7 +387,18 @@ class ShaderBuilder:
                         code += f"    {kw} (idx == {idx}) result = vec4({', '.join(parts)});\n"
 
             code += self._activation_code(act, oc0, oc_count)
-            code += "    return result;\n}\n\n"
+            if residual_base:
+                # GPU bilinear sample of HOOKED at the output pixel center
+                # (matches F.interpolate(align_corners=False)).
+                code += "    result += HOOKED_tex(HOOKED_pos);\n"
+            if is_output:
+                code += "    result = clamp(result, vec4(0.0), vec4(1.0));\n"
+                if self.hook == "LUMA":
+                    code += "    return vec4(result.x, 0.0, 0.0, 1.0);\n}\n\n"
+                else:
+                    code += "    return vec4(result.rgb, 1.0);\n}\n\n"
+            else:
+                code += "    return result;\n}\n\n"
             self.passes.append(code)
 
     # -- generic add pass (fallback) -------------------------------------------
@@ -634,8 +650,25 @@ class GraphConverter:
                     cur_out = nxt.output[0]
 
                 c_out = inp.channels // (r * r)
+
+                # Fuse a following Add with the bilinear global residual
+                # (DIS2-style graphs: ... -> DepthToSpace -> Add(Resize(input))).
+                residual_base = False
+                nxt = self._single_consumer(cur_out)
+                if nxt is not None and nxt.op_type == "Add":
+                    other = nxt.input[1] if nxt.input[0] == cur_out else nxt.input[0]
+                    other_t = tensors.get(other)
+                    if (other_t is not None and other_t.kind in ("hooked", "base")
+                            and other_t.channels == c_out
+                            and (other_t.kind == "base" or inp.scale * r == 1)):
+                        residual_base = True
+                        consumed.add(id(nxt))
+                        cur_out = nxt.output[0]
+
+                is_output = (cur_out == output_name)
                 out_tex = new_textures(f"ps{tex_counter[0]}", c_out)
-                builder.emit_pixelshuffle(inp, out_tex, r, mode, act)
+                builder.emit_pixelshuffle(inp, out_tex, r, mode, act,
+                                          residual_base=residual_base, is_output=is_output)
                 tensors[cur_out] = Tensor(kind="textures", channels=c_out,
                                           scale=inp.scale * r, textures=out_tex)
                 continue

@@ -19,6 +19,22 @@ Arguments:
 - `--validate`: Validate exported model against PyTorch
 - `--no-simplify`: Skip ONNX graph simplification
 
+## fuse_dis2.py
+
+Fuses a trained DIS2 checkpoint (training form, with reparameterization
+branches) into the plain-conv deploy form, and optionally exports ONNX.
+
+```bash
+# Fuse to a deploy checkpoint
+python tools/fuse_dis2.py trained.safetensors fused.safetensors --model fast --scale 2
+
+# Fuse and export ONNX (TensorRT / export_glsl.py ready)
+python tools/fuse_dis2.py trained.safetensors fused.onnx --model fast --scale 2 --fp16
+```
+
+The fused model computes exactly the same function as the training form
+(verified to float precision) with ~4x fewer parameters.
+
 ## export_glsl.py
 
 Converts ONNX models to mpv-compatible GLSL shaders. Works for all DIS scales

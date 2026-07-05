@@ -26,6 +26,34 @@ This is the inference and ONNX conversion code. To train a model, you'll want to
 | `DIS_Balanced` | ~269K | Balance of speed and quality |
 | `DIS_Fast` | ~195K | Fastest, recommended |
 
+## DIS2 (experimental)
+
+DIS2 is a reparameterized successor to DIS: it trains with multi-branch
+ECB blocks (RepVGG/ECBSR-style) that collapse into a **plain stack of 3x3
+convs** for inference, and keeps all convolutions at low resolution
+(DIS ran its tail conv at output resolution). Same op set as DIS
+(Conv/PReLU/Add/PixelShuffle/Resize), so TensorRT, ONNX, and the GLSL
+converter work unchanged on the fused model.
+
+| Variant (2x) | MACs / LR pixel | Deploy params | vs DIS |
+|---------|-----------------|--------|--------|
+| `DIS2_Fast` (32f, 6 convs) | ~60K | ~60K | 3.3x fewer MACs than DIS_Fast |
+| `DIS2_Balanced` (48f, 8 convs) | ~172K | ~173K | 1.6x fewer MACs than DIS_Balanced |
+
+Measured as mpv GLSL shaders (960x540 -> 1080p): DIS2_Fast renders ~4-5x
+faster than DIS_Fast. Quality parity with DIS relies on the rep branches
+during training and needs to be confirmed with a full training run.
+
+Train with `type: dis2_fast` / `type: dis2_balanced` in traiNNer-redux
+(drop `models/dis2_arch.py` into its arch folder), then fuse for release:
+
+```bash
+python tools/fuse_dis2.py trained.safetensors fused.onnx --model fast --scale 2 --fp16
+```
+
+The training-form checkpoint is ~4x larger than the fused one; always ship
+the fused version.
+
 ## Benchmarks
 
 **Configuration**: 2x upscale, 720p, FP16 with TensorRT, 2 streams
